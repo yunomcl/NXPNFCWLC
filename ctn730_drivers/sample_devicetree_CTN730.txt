@@ -1,0 +1,10 @@
+Example:
+
+&i2c{
+	status = "okay";
+	ctn730: ctn730@28 {
+	compatible ="nxp,ctn730";
+	reg = <0x28>;
+	interrupt-gpios = <&gpio5 11 0>;
+	enable-gpios = <&gpio5 12 0>;
+};

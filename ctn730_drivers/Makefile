@@ -1,0 +1,1 @@
+obj-$(CONFIG_NFC_NXP_CTN730) += CTN730_i2c.o
