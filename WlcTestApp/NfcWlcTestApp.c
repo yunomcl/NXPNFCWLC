@@ -107,6 +107,90 @@ static void Activate (int handle)
 	
 }
 
+static void EnableCharging (int handle)
+{
+//	int DetectionInterval = 
+//	printf("Detection Interval: ");
+//	scanf("%x", &DetectionInterval);
+	
+    char EnableChargingCMD[] = {0x10, 0x02, 0x00, 0x02};
+    char Answer[256];
+    int NbBytes = 0;
+	NbBytes = transceive(handle, EnableChargingCMD, sizeof(EnableChargingCMD), Answer, sizeof(Answer));
+	if((NbBytes == 3) && (Answer[2] == 0x00))
+    {	
+		printf(" Response Status OK\n");
+		while(1)
+		{
+		 NbBytes = receive(handle,  Answer, sizeof(Answer));
+		 
+		 if((NbBytes == 10) && (Answer[0] == 0x92) && (Answer[1] == 0x8) && (Answer[2] == 0x00))
+			 printf("Device detected\n");
+		 else if (Answer[0] == 0x92 && (Answer[2] == 0x1))
+			 printf("Device deactivated\n");
+		 else if (Answer[0] == 0x92 && (Answer[2] == 0x2))
+			 printf("Device lost\n");
+		 else if (Answer[0] == 0x94 && (Answer[2] == 0x0))
+			 printf("Charging Started\n");
+		 else if (Answer[0] == 0x94 && (Answer[2] == 0x1))
+			 printf("Charging Ended\n");		 
+		 else if (Answer[0] == 0x94 && (Answer[2] == 0x2))
+			 printf("Charging Stopped\n");		 		 
+		 else if (Answer[0] == 0x95)
+			 printf("Battery percentage: %d\n",Answer[2]);
+		}
+    }
+	else
+		printf("Tag activation failed\n");
+	
+}
+
+static void WriteParameter (int handle)
+{
+	unsigned int parameter = 0;
+	int length=0;
+	unsigned int value = 0;
+	int exit=1;
+	do {
+	printf("\nEnter Parameter ID:");
+	scanf("%x", &parameter);
+	printf("\nEnter length of value:");
+	scanf("%d", &length);
+	printf("\nEnter value:");
+	scanf("%x", &value);
+	
+	char WriteParameterCMD[] = {0x01, length+1 , parameter, value};
+    char Answer[256];
+    int NbBytes = 0;
+	NbBytes = transceive(handle, WriteParameterCMD, sizeof(WriteParameterCMD), Answer, sizeof(Answer));
+	
+	printf("\n Enter 0 to exit:");
+	scanf("%d", &exit);
+	}while(exit);
+
+}
+
+static void ReadParameter (int handle)
+{
+	unsigned int parameter = 0;
+	int exit=1;
+	do {
+	printf("\nEnter Parameter ID:");
+	scanf("%x", &parameter);
+	
+	char ReadParameterCMD[] = {0x02, 0x01 , parameter};
+    char Answer[256];
+    int NbBytes = 0;
+	NbBytes = transceive(handle, ReadParameterCMD, sizeof(ReadParameterCMD), Answer, sizeof(Answer));
+	
+	printf("\n Enter 0 to exit:");
+	scanf("%d", &exit);
+	}while(exit);
+
+}
+
+
+
 int main()
 {
 	int nHandle;
@@ -153,6 +237,9 @@ int main()
 	printf("\t 1. Continuous RF ON\n");
 	printf("\t 2. Continuous RF Off\n");
 	printf("\t 3. Activate Tag and verify WLCCAP\n");
+	printf("\t 4. Enable Charging\n");
+	printf("\t 5. Write Parameter\n");
+	printf("\t 6. Read Parameter\n");
 	printf("\t 0. Quit application \n");
 	printf("Your choice: ");
 	scanf("%d", &NbBytes);
@@ -161,6 +248,9 @@ int main()
 		case 1:	RfOn(nHandle);	break;
 		case 2:	RfOff(nHandle);	break;
 		case 3:	Activate(nHandle);	break;
+		case 4:	EnableCharging(nHandle);break;
+		 5:case	WriteParameter(nHandle);break;
+		case 6:	ReadParameter(nHandle);break;
 		case 0: break;
 		default: printf("Wrong choice\n");	break;
 	}
