@@ -249,7 +249,7 @@ int main()
 		case 2:	RfOff(nHandle);	break;
 		case 3:	Activate(nHandle);	break;
 		case 4:	EnableCharging(nHandle);break;
-		 5:case	WriteParameter(nHandle);break;
+		case 5:	WriteParameter(nHandle);break;
 		case 6:	ReadParameter(nHandle);break;
 		case 0: break;
 		default: printf("Wrong choice\n");	break;
