@@ -167,7 +167,6 @@ static void WriteParameter (int handle)
 	printf("\n Enter 0 to exit:");
 	scanf("%d", &exit);
 	}while(exit);
-
 }
 
 static void ReadParameter (int handle)
@@ -189,7 +188,25 @@ static void ReadParameter (int handle)
 
 }
 
-
+static void ReadCRN_EEPROM (int handle)
+{
+	unsigned int block = 0;
+	unsigned int NumOfBlock = 0;
+	int exit=1;
+	do {
+	printf("\nEnter starting block (min. 12):");
+	scanf("%x", &block);
+	printf("\nEnter Number of blocks to be read:");
+	scanf("%x", &NumOfBlock);
+	
+	char ReadParameterCMD[] = {0x06,0x03,0x09,block,NumOfBlock};
+    char Answer[256];
+    int NbBytes = 0;
+	NbBytes = transceive(handle, ReadParameterCMD, sizeof(ReadParameterCMD), Answer, sizeof(Answer));
+	printf("\n Enter 0 to exit:");
+	scanf("%d", &exit);
+	}while(exit);
+}
 
 int main()
 {
@@ -240,6 +257,7 @@ int main()
 	printf("\t 4. Enable Charging\n");
 	printf("\t 5. Write Parameter\n");
 	printf("\t 6. Read Parameter\n");
+	printf("\t 7. Read CRN120 EEPROM\n");
 	printf("\t 0. Quit application \n");
 	printf("Your choice: ");
 	scanf("%d", &NbBytes);
@@ -251,6 +269,7 @@ int main()
 		case 4:	EnableCharging(nHandle);break;
 		case 5:	WriteParameter(nHandle);break;
 		case 6:	ReadParameter(nHandle);break;
+		case 7:	ReadCRN_EEPROM(nHandle);break;
 		case 0: break;
 		default: printf("Wrong choice\n");	break;
 	}
