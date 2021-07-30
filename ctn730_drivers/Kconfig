@@ -1,9 +1,14 @@
-config NFC_NXP_CTN730
-	bool "NXP CTN730 based driver"
-	depends on I2C
-	default y
-	---help---
-	  NXP CTN730 driver based on I2C.
-	  This is a driver to provides I2C access to CTN730 NFC WLC device 
+#
+# Nxp NFC wireless(I2C) devices
+#
 
+config WLC_NXP_CTN730
+  bool "NXP CTN73X driver"
+  depends on I2C
+  default y
+  ---help---
+    NXP CTN730 driver based on I2C.
+    This is a driver to provides I2C access to CTN730 NFC WLC device
+
+    You'll have to say Y if your computer contains an I2C device
 

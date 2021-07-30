@@ -1,4 +1,4 @@
-/*
+/******************************************************************************
  * Copyright (C) 2021 NXP
  *
  * This program is free software; you can redistribute it and/or modify
@@ -15,45 +15,35 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
- */
+ ******************************************************************************/
 
 #include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/fs.h>
-#include <linux/slab.h>
 #include <linux/init.h>
-#include <linux/list.h>
-#include <linux/i2c.h>
-#include <linux/irq.h>
-#include <linux/jiffies.h>
-#include <linux/uaccess.h>
 #include <linux/delay.h>
+#include <linux/of_gpio.h>
+#include <linux/i2c.h>
 #include <linux/interrupt.h>
-#include <linux/io.h>
+#include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/gpio.h>
 #include <linux/miscdevice.h>
 #include <linux/spinlock.h>
+#include <linux/uaccess.h>
 #include "CTN730_i2c.h"
-#include <linux/of_gpio.h>
-#include <linux/regulator/consumer.h>
-#include <linux/of.h>
 
-#define MAX_BUFFER_SIZE	512
+#define MAX_BUFFER_SIZE 512
 
-
-#define CHIP "CTN730"
-#define DRIVER_CARD "CTN730 NFC"
+#define CHIP "ctn730"
 #define DRIVER_DESC "NFC WLC driver for CTN730 "
 
-
-struct ctn730_dev	{
+struct ctn730_dev {
 	wait_queue_head_t read_wq;
 	struct mutex read_mutex;
 	struct i2c_client *client;
 	struct miscdevice ctn730_device;
 	int ven_gpio;
 	int irq_gpio;
+	uint8_t *read_kbuf;
+	uint8_t *write_kbuf;
 	bool irq_enabled;
 	spinlock_t irq_enabled_lock;
 };
@@ -61,7 +51,7 @@ struct ctn730_dev	{
 /**********************************************************
  * Interrupt control and handler
  **********************************************************/
- 
+
 static void ctn730_disable_irq(struct ctn730_dev *ctn730_dev)
 {
 	unsigned long flags;
@@ -89,17 +79,15 @@ static irqreturn_t ctn730_dev_irq_handler(int irq, void *dev_id)
 /**********************************************************
  * private functions
  **********************************************************/
- 
+
 static int ctn730_enable(struct ctn730_dev *dev)
 {
-		pr_info("%s power on\n", __func__);
-		if (gpio_is_valid(dev->ven_gpio))
-			gpio_set_value_cansleep(dev->ven_gpio, 1); 
-		msleep(100);
-
+	pr_info("%s power on\n", __func__);
+	if (gpio_is_valid(dev->ven_gpio))
+		gpio_set_value_cansleep(dev->ven_gpio, 1);
+	usleep_range(100000,120000); // 100-120ms delay
 
 	return 0;
-
 }
 
 static void ctn730_disable(struct ctn730_dev *dev)
@@ -108,20 +96,17 @@ static void ctn730_disable(struct ctn730_dev *dev)
 	pr_info("%s power off\n", __func__);
 	if (gpio_is_valid(dev->ven_gpio))
 		gpio_set_value_cansleep(dev->ven_gpio, 0);
-	msleep(100);
-
+	usleep_range(100000,120000); // 100-120ms delay
 }
 
 /**********************************************************
  * driver functions
  **********************************************************/
- 
- 
+
 static ssize_t ctn730_dev_read(struct file *filp, char __user *buf,
-		size_t count, loff_t *offset)
+	size_t count, loff_t *offset)
 {
 	struct ctn730_dev *ctn730_dev = filp->private_data;
-	char tmp[MAX_BUFFER_SIZE];
 	int ret;
 
 	if (count > MAX_BUFFER_SIZE)
@@ -140,8 +125,7 @@ static ssize_t ctn730_dev_read(struct file *filp, char __user *buf,
 		while (1) {
 			ctn730_dev->irq_enabled = true;
 			enable_irq(ctn730_dev->client->irq);
-			ret = wait_event_interruptible(
-					ctn730_dev->read_wq,
+			ret = wait_event_interruptible(ctn730_dev->read_wq,
 					!ctn730_dev->irq_enabled);
 			ctn730_disable_irq(ctn730_dev);
 			if (ret)
@@ -149,18 +133,15 @@ static ssize_t ctn730_dev_read(struct file *filp, char __user *buf,
 			if (gpio_get_value(ctn730_dev->irq_gpio))
 				break;
 
-			pr_warning("%s: spurious interrupt detected\n", __func__);
+			pr_warn("%s: spurious interrupt detected\n",
+					__func__);
 		}
 	}
 
 	/* Read data */
-	ret = i2c_master_recv(ctn730_dev->client, tmp, count);
+	ret = i2c_master_recv(ctn730_dev->client, ctn730_dev->read_kbuf , count);
 
 	mutex_unlock(&ctn730_dev->read_mutex);
-
-	/* ctn730 seems to be slow in handling I2C read requests
-	 * so add 1ms delay after recv operation */
-	udelay(1000);
 
 	if (ret < 0) {
 		pr_err("%s: i2c_master_recv returned %d\n", __func__, ret);
@@ -168,11 +149,11 @@ static ssize_t ctn730_dev_read(struct file *filp, char __user *buf,
 	}
 	if (ret > count) {
 		pr_err("%s: received too many bytes from i2c (%d)\n",
-			__func__, ret);
+				__func__, ret);
 		return -EIO;
 	}
-	if (copy_to_user(buf, tmp, ret)) {
-		pr_warning("%s : failed to copy to user space\n", __func__);
+	if (copy_to_user(buf, ctn730_dev->read_kbuf, ret)) {
+		pr_warn("%s : failed to copy to user space\n", __func__);
 		return -EFAULT;
 	}
 	return ret;
@@ -183,10 +164,9 @@ fail:
 }
 
 static ssize_t ctn730_dev_write(struct file *filp, const char __user *buf,
-		size_t count, loff_t *offset)
+	size_t count, loff_t *offset)
 {
-	struct ctn730_dev  *ctn730_dev;
-	char tmp[MAX_BUFFER_SIZE];
+	struct ctn730_dev *ctn730_dev;
 	int ret;
 
 	ctn730_dev = filp->private_data;
@@ -194,31 +174,25 @@ static ssize_t ctn730_dev_write(struct file *filp, const char __user *buf,
 	if (count > MAX_BUFFER_SIZE)
 		count = MAX_BUFFER_SIZE;
 
-	if (copy_from_user(tmp, buf, count)) {
+	if (copy_from_user(ctn730_dev->write_kbuf, buf, count)) {
 		pr_err("%s : failed to copy from user space\n", __func__);
 		return -EFAULT;
 	}
 
 	pr_debug("%s : writing %zu bytes.\n", __func__, count);
 	/* Write data */
-	ret = i2c_master_send(ctn730_dev->client, tmp, count);
+	ret = i2c_master_send(ctn730_dev->client, ctn730_dev->write_kbuf, count);
 	if (ret != count) {
-		pr_err("%s : i2c_master_send returned %d\n", __func__, ret);
+		pr_debug("%s : i2c_master_send returned %d\n", __func__, ret);
 		ret = -EIO;
 	}
-
-	/* ctn730 seems to be slow in handling I2C write requests
-	 * so add 1ms delay after I2C send oparation */
-	udelay(1000);
-
 	return ret;
 }
 
 static int ctn730_dev_open(struct inode *inode, struct file *filp)
 {
 	struct ctn730_dev *ctn730_dev = container_of(filp->private_data,
-											   struct ctn730_dev,
-											   ctn730_device);
+			struct ctn730_dev, ctn730_device);
 
 	filp->private_data = ctn730_dev;
 
@@ -234,19 +208,19 @@ static int ctn730_dev_release(struct inode *inode, struct file *filp)
 }
 
 // manually reset device via GPIO
-static long  ctn730_dev_ioctl(struct file *filp, unsigned int cmd,
-				unsigned long arg)
+static long ctn730_dev_ioctl(struct file *filp, unsigned int cmd,
+							unsigned long arg)
 {
 	struct ctn730_dev *ctn730_dev = filp->private_data;
 
 	pr_info("%s, cmd=%d, arg=%lu\n", __func__, cmd, arg);
 	switch (cmd) {
-	case ctn730_SET_PWR:
+	case CTN730_SET_PWR:
 
-		if (arg == 1) {
+		if (PWR_ON == arg) {
 			/* power on */
 			ctn730_enable(ctn730_dev);
-		} else  if (arg == 0) {
+		} else if (PWR_OFF == arg) {
 			/* power off */
 			ctn730_disable(ctn730_dev);
 		} else {
@@ -263,15 +237,14 @@ static long  ctn730_dev_ioctl(struct file *filp, unsigned int cmd,
 }
 
 static const struct file_operations ctn730_dev_fops = {
-	.owner	= THIS_MODULE,
-	.llseek	= no_llseek,
-	.read	= ctn730_dev_read,
-	.write	= ctn730_dev_write,
-	.open	= ctn730_dev_open,
-	.release  = ctn730_dev_release,
-	.unlocked_ioctl  = ctn730_dev_ioctl,
+		.owner = THIS_MODULE,
+		.llseek = no_llseek,
+		.read = ctn730_dev_read,
+		.write = ctn730_dev_write,
+		.open = ctn730_dev_open,
+		.release = ctn730_dev_release,
+		.unlocked_ioctl = ctn730_dev_ioctl,
 };
-
 
 /*
  * Handlers for alternative sources of platform_data
@@ -279,10 +252,10 @@ static const struct file_operations ctn730_dev_fops = {
 /*
  * Translate OpenFirmware node properties into platform_data
  */
- 
- // Remaps device tree gpio definition with the
+
+// Remaps device tree gpio definition with the
 static int ctn730_get_pdata(struct device *dev,
-							struct ctn730_i2c_platform_data *pdata)
+				struct ctn730_i2c_platform_data *pdata)
 {
 	struct device_node *node;
 	u32 flags;
@@ -301,23 +274,19 @@ static int ctn730_get_pdata(struct device *dev,
 	val = of_get_named_gpio_flags(node, "enable-gpios", 0, &flags);
 	if (val >= 0) {
 		pdata->ven_gpio = val;
-	}
-	else {
+	} else {
 		dev_err(dev, "VEN GPIO error getting from OF node\n");
 		return val;
 	}
-
 
 	/* irq pin - data available irq - REQUIRED */
 	val = of_get_named_gpio_flags(node, "interrupt-gpios", 0, &flags);
 	if (val >= 0) {
 		pdata->irq_gpio = val;
-	}
-	else {
+	} else {
 		dev_err(dev, "IRQ GPIO error getting from OF node\n");
 		return val;
 	}
-
 
 	return 0;
 }
@@ -331,7 +300,7 @@ static int ctn730_probe(struct i2c_client *client,
 
 {
 	int ret;
-	struct ctn730_i2c_platform_data *pdata; // gpio values, from board file or DT
+	struct ctn730_i2c_platform_data *pdata;//gpio values, from board/DT file
 	struct ctn730_i2c_platform_data tmp_pdata;
 	struct ctn730_dev *ctn730_dev; // internal device specific data
 
@@ -340,60 +309,47 @@ static int ctn730_probe(struct i2c_client *client,
 	/* ---- retrieve the platform data ---- */
 	/* If the dev.platform_data is NULL, then */
 	/* attempt to read from the device tree */
-	if(!client->dev.platform_data)
-	{
+	if (!client->dev.platform_data) {
 		ret = ctn730_get_pdata(&(client->dev), &tmp_pdata);
-		if(ret){
+		if (ret)
 			return ret;
-		}
 
 		pdata = &tmp_pdata;
-	}
-	else
-	{
+	} else {
 		pdata = client->dev.platform_data;
 	}
 
 	if (pdata == NULL) {
 		pr_err("%s : nfc probe fail\n", __func__);
-		return  -ENODEV;
+		return -ENODEV;
 	}
 
 	/* validate the the adapter has basic I2C functionality */
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		pr_err("%s : need I2C_FUNC_I2C\n", __func__);
-		return  -ENODEV;
+		return -ENODEV;
 	}
 
 	/* reserve the GPIO pins */
-	pr_info("%s: request irq_gpio %d\n", __func__, pdata->irq_gpio);
-	ret = gpio_request(pdata->irq_gpio, "nfc_int");
-	if (ret){
-		pr_err("%s :not able to get GPIO irq_gpio\n", __func__);
-		return  -ENODEV;
-	}
-	ret = gpio_to_irq(pdata->irq_gpio);
-	if (ret < 0){
-		pr_err("%s :not able to map GPIO irq_gpio to an IRQ\n", __func__);
-		goto err_ven;
-	}
-	else{
-		client->irq = ret;
-	}
 
-	pr_info("%s: request ven_gpio %d\n", __func__, pdata->ven_gpio);
-	ret = gpio_request(pdata->ven_gpio, "nfc_ven");
-	if (ret){
-		pr_err("%s :not able to get GPIO ven_gpio\n", __func__);
-		goto err_ven;
-	}
 
 	/* allocate the ctn730 driver information structure */
 	ctn730_dev = kzalloc(sizeof(*ctn730_dev), GFP_KERNEL);
 	if (ctn730_dev == NULL) {
-		dev_err(&client->dev, "failed to allocate memory for module data\n");
 		ret = -ENOMEM;
-		goto err_exit;
+		dev_err(&client->dev, "failed to allocate memory for module data\n");
+		goto err;
+	}
+
+	ctn730_dev->read_kbuf = kzalloc(MAX_BUFFER_SIZE, GFP_DMA | GFP_KERNEL);
+	if (!ctn730_dev->read_kbuf) {
+		ret = -ENOMEM;
+		goto err_free_ctn_dev;
+	}
+	ctn730_dev->write_kbuf = kzalloc(MAX_BUFFER_SIZE, GFP_DMA | GFP_KERNEL);
+	if (!ctn730_dev->write_kbuf) {
+		ret = -ENOMEM;
+		goto err_free_read_kbuf;
 	}
 
 	/* store the platform data in the driver info struct */
@@ -403,18 +359,38 @@ static int ctn730_probe(struct i2c_client *client,
 	ctn730_dev->client = client;
 
 	/* finish configuring the I/O */
-	ret = gpio_direction_input(ctn730_dev->irq_gpio);
-	if (ret < 0) {
-		pr_err("%s :not able to set irq_gpio as input\n", __func__);
-		goto err_exit;
+	pr_info("%s: request ven_gpio %d\n", __func__, pdata->ven_gpio);
+	ret = gpio_request(pdata->ven_gpio, "nfc_ven");
+	if (ret) {
+		pr_err("%s :not able to get GPIO ven_gpio\n", __func__);
+		ret = -ENODEV;
+		goto err_free_write_kbuf;
 	}
-
 	ret = gpio_direction_output(ctn730_dev->ven_gpio, 0);
 	if (ret < 0) {
 		pr_err("%s : not able to set ven_gpio as output\n", __func__);
-		goto err_exit;
+		goto err_free_ven_gpio;
 	}
 
+	pr_info("%s: request irq_gpio %d\n", __func__, pdata->irq_gpio);
+	ret = gpio_request(pdata->irq_gpio, "nfc_int");
+	if (ret) {
+		pr_err("%s :not able to get GPIO irq_gpio\n", __func__);
+		ret = -ENODEV;
+		goto err_free_ven_gpio;
+	}
+	ret = gpio_to_irq(pdata->irq_gpio);
+	if (ret < 0) {
+		pr_err("%s :not able to map GPIO irq_gpio to an IRQ\n",
+				__func__);
+		goto err_free_irq_gpio;
+	}
+	client->irq = ret;
+	ret = gpio_direction_input(ctn730_dev->irq_gpio);
+	if (ret < 0) {
+		pr_err("%s :not able to set irq_gpio as input\n", __func__);
+		goto err_free_irq_gpio;
+	}
 
 	/* init mutex and queues */
 	init_waitqueue_head(&ctn730_dev->read_wq);
@@ -428,7 +404,7 @@ static int ctn730_probe(struct i2c_client *client,
 	ret = misc_register(&ctn730_dev->ctn730_device);
 	if (ret) {
 		pr_err("%s : misc_register failed\n", __FILE__);
-		goto err_misc_register;
+		goto err_mutex_destroy;
 	}
 
 	/* request irq.  the irq is set whenever the chip has data available
@@ -437,42 +413,49 @@ static int ctn730_probe(struct i2c_client *client,
 	pr_info("%s : requesting IRQ %d\n", __func__, client->irq);
 	ctn730_dev->irq_enabled = true;
 	ret = request_irq(client->irq, ctn730_dev_irq_handler,
-				IRQF_TRIGGER_HIGH, client->name, ctn730_dev);
+			IRQF_TRIGGER_HIGH, client->name, ctn730_dev);
 	if (ret) {
 		dev_err(&client->dev, "request_irq failed\n");
-		goto err_request_irq_failed;
+		goto err_ctn_misc_unregister;
 	}
 	ctn730_disable_irq(ctn730_dev);
-
 	i2c_set_clientdata(client, ctn730_dev);
 
 	return 0;
 
-err_request_irq_failed:
+
+err_ctn_misc_unregister:
 	misc_deregister(&ctn730_dev->ctn730_device);
-err_misc_register:
-err_exit:
-err_ven:
-	gpio_free(pdata->irq_gpio);
+err_mutex_destroy:
+	mutex_destroy(&ctn730_dev->read_mutex);
+err_free_irq_gpio:
+	gpio_free(ctn730_dev->irq_gpio);
+err_free_ven_gpio:
+	gpio_free(ctn730_dev->ven_gpio);
+err_free_write_kbuf:
+	kfree(ctn730_dev->write_kbuf);
+err_free_read_kbuf:
+	kfree(ctn730_dev->read_kbuf);
+err_free_ctn_dev:
+	kfree(ctn730_dev);
+err:
 	return ret;
 }
 
-
 static int ctn730_remove(struct i2c_client *client)
-
 {
 	struct ctn730_dev *ctn730_dev;
 
 	pr_info("%s\n", __func__);
 
 	ctn730_dev = i2c_get_clientdata(client);
-	free_irq(client->irq, ctn730_dev);
+
 	misc_deregister(&ctn730_dev->ctn730_device);
 	mutex_destroy(&ctn730_dev->read_mutex);
 	gpio_free(ctn730_dev->irq_gpio);
 	gpio_free(ctn730_dev->ven_gpio);
-
-
+	kfree(ctn730_dev->write_kbuf);
+	kfree(ctn730_dev->read_kbuf);
 	kfree(ctn730_dev);
 
 	return 0;
@@ -482,26 +465,27 @@ static int ctn730_remove(struct i2c_client *client)
  *
  */
 
-static struct of_device_id ctn730_dt_match[] = {
-	{ .compatible = "nxp,ctn730", },
-	{},
+static const struct of_device_id ctn730_dt_match[] = {
+		{
+				.compatible = "nxp,ctn730",
+		},
+		{},
 };
-MODULE_DEVICE_TABLE(of, ctn730_dt_match);
-
+// MODULE_DEVICE_TABLE(of, ctn730_dt_match);
 
 static const struct i2c_device_id ctn730_id[] = {
-	{ "ctn730", 0 },
-	{ },
+		{"ctn730", 0},
+		{},
 };
-MODULE_DEVICE_TABLE(i2c, ctn730_id);
+// MODULE_DEVICE_TABLE(i2c, ctn730_id);
 
 static struct i2c_driver ctn730_driver = {
-	.id_table	= ctn730_id,
-	.probe		= ctn730_probe,
-	.remove		= ctn730_remove,
-	.driver		= {
-		.owner	= THIS_MODULE,
-		.name	= "ctn730",
+	.id_table = ctn730_id,
+	.probe = ctn730_probe,
+	.remove = ctn730_remove,
+	.driver = {
+		.owner = THIS_MODULE,
+		.name = "ctn730",
 		.of_match_table = ctn730_dt_match,
 	},
 };
@@ -526,5 +510,6 @@ module_init(ctn730_dev_init);
 module_exit(ctn730_dev_exit);
 
 MODULE_AUTHOR("Michael Lee");
+MODULE_ALIAS("of:nxp,ctn730");
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
