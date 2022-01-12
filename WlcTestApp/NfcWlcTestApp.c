@@ -116,6 +116,8 @@ static void EnableCharging (int handle)
     char EnableChargingCMD[] = {0x10, 0x02, 0x00, 0x02};
     char Answer[256];
     int NbBytes = 0;
+	int PayloadLen =0;
+	int PayloadCounter = 0;
 	NbBytes = transceive(handle, EnableChargingCMD, sizeof(EnableChargingCMD), Answer, sizeof(Answer));
 	if((NbBytes == 3) && (Answer[2] == 0x00))
     {	
@@ -138,6 +140,13 @@ static void EnableCharging (int handle)
 			 printf("Charging Stopped\n");		 		 
 		 else if (Answer[0] == 0x95)
 			 printf("Battery percentage: %d\n",Answer[2]);
+		 else if (Answer[0] == 0x9F){
+				PayloadLen = Answer[1]; 
+				PayloadCounter = sizeof(Answer)- PayloadLen;
+				do{
+				printf("Optional NDEF: %d\n",Answer[PayloadCounter]);		 
+				PayloadCounter ++;
+				}while(PayloadCounter<sizeof(Answer))
 		}
     }
 	else
