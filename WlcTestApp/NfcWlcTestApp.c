@@ -127,11 +127,21 @@ static void EnableCharging (int handle)
 		 NbBytes = receive(handle,  Answer, sizeof(Answer));
 		 
 		 if((NbBytes == 10) && (Answer[0] == 0x92) && (Answer[1] == 0x8) && (Answer[2] == 0x00))
-			 printf("Device detected\n");
+			 printf("DEVICE_DETECTED\n");
 		 else if (Answer[0] == 0x92 && (Answer[2] == 0x1))
-			 printf("Device deactivated\n");
+			 printf("DEVICE_DEACTIVATED\n");
 		 else if (Answer[0] == 0x92 && (Answer[2] == 0x2))
-			 printf("Device lost\n");
+			 printf("DEVICE_LOST\n");
+		 else if (Answer[0] == 0x92 && (Answer[2] == 0x3))
+			 printf("DEVICE_VERSION_MISMATCH\n");
+		 else if (Answer[0] == 0x92 && (Answer[2] == 0x4))
+			 printf("DEVICE_DOCKED\n");
+		 else if (Answer[0] == 0x92 && (Answer[2] == 0x5))
+			 printf("DEVICE_UNDOCKED\n");
+		 else if (Answer[0] == 0x92 && (Answer[2] == 0x6))
+			 printf("FO_PRESENT\n");
+		 else if (Answer[0] == 0x92 && (Answer[2] == 0x7))
+			 printf("BATTERY_FULL\n");
 		 else if (Answer[0] == 0x94 && (Answer[2] == 0x0))
 			 printf("Charging Started\n");
 		 else if (Answer[0] == 0x94 && (Answer[2] == 0x1))
